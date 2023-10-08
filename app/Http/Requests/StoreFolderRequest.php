@@ -12,14 +12,6 @@ use Illuminate\Validation\Rule;
 class StoreFolderRequest extends ParentIdBaseRequest
 {
     /**
-     * Determine if the user is authorized to make this request.
-     */
-    public function authorize(): bool
-    {
-        return true;
-    }
-
-    /**
      * Get the validation rules that apply to the request.
      *
      * @return array<string, ValidationRule|array|string>
@@ -27,8 +19,6 @@ class StoreFolderRequest extends ParentIdBaseRequest
      */
     public function rules(): array
     {
-        ddd($this);
-
         return array_merge(
             parent::rules(),
             [

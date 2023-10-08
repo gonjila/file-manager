@@ -36,7 +36,7 @@ import Modal from "@/Components/Modal.vue";
 import InputLabel from "@/Components/InputLabel.vue";
 import TextInput from "@/Components/TextInput.vue";
 import InputError from "@/Components/InputError.vue";
-import {useForm} from "@inertiajs/vue3";
+import {useForm, usePage} from "@inertiajs/vue3";
 import SecondaryButton from "@/Components/SecondaryButton.vue";
 import PrimaryButton from "@/Components/PrimaryButton.vue";
 
@@ -47,13 +47,17 @@ const emit = defineEmits(['update:modelValue'])
 
 const folderNameInputRef = ref(null)
 const form = useForm({
-    name: ''
+    name: '',
+    parent_id: null
 })
+const page = usePage()
 
 const onModalShow = () => {
     nextTick(() => folderNameInputRef.value && folderNameInputRef.value.focus())
 };
 const createFolder = () => {
+    form.parent_id = page.props.folder.id
+
     form.post(route('folder.create'), {
         preserveScroll: true,
         onSuccess: () => {

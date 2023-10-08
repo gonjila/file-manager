@@ -11,9 +11,21 @@ use Inertia\Response;
 
 class FileController extends Controller
 {
-    public function myFiles(): Response
+    public function myFiles(string $folder = null): Response
     {
+        if ($folder) {
+            $folder = File:: query()
+                ->where('created_by', Auth:: id())
+                ->where('path', $folder)
+                ->firstOrFail();
+        }
+
+        if (!$folder) {
+            $folder = $this->getRoot();
+        }
+
         $files = File::query()
+            ->where('parent_Id', $folder->id)
             ->where('created_by', Auth::id())
             ->whereNotNull('parent_id')
             ->orderByDesc('is_folder')
@@ -21,12 +33,15 @@ class FileController extends Controller
             ->paginate(10);
 
         $files = FileResource::collection($files);
-        
-        return Inertia::render('MyFiles', compact('files'));
+        $ancestors = FileResource::collection([...$folder->ancestors, $folder]);
+        $folder = new FileResource($folder);
+
+        return Inertia::render('MyFiles', compact('files', 'folder', 'ancestors'));
     }
 
     public function createFolder(StoreFolderRequest $request)
     {
+
         $data = $request->validated();
         $parent = $request->parent;
 
