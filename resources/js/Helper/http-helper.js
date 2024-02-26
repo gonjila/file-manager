@@ -6,7 +6,11 @@ export function httpGet(url) {
             'Content-Type': 'application/json',
             'Accept': 'application/json'
         }
-    }).then(response => response.json())
+    }).then(response => {
+        if (response.ok) {
+            return response.json()
+        }
+    })
 }
 
 export function httpPost(url, data) {

@@ -32,7 +32,7 @@ const uploadFiles = (files) => {
         },
         onError: (errors) => {
             console.log('form error', Object.keys(errors))
-            let message = ''
+            let message = '';
 
             if ((Object.keys(errors)).length > 0) {
                 message = errors[Object.keys(errors)[0]]
@@ -41,6 +41,10 @@ const uploadFiles = (files) => {
             }
 
             showErrorDialog(message)
+        },
+        onFinish: () => {
+            fileUploadForm.clearErrors();
+            fileUploadForm.reset();
         }
     });
 }
