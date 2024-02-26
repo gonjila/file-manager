@@ -9,7 +9,8 @@ use Illuminate\Support\Facades\Auth;
 
 class StoreFileRequest extends ParentIdBaseRequest
 {
-    protected function prepareForValidation()
+
+    protected function prepareForValidation(): void
     {
         $paths = array_filter($this->relative_paths ?? [], fn($f) => $f != null);
 
@@ -19,10 +20,10 @@ class StoreFileRequest extends ParentIdBaseRequest
         ]);
     }
 
-
-    protected function passedValidation()
+    protected function passedValidation(): void
     {
         $data = $this->validated();
+
         $this->replace([
             'file_tree' => $this->buildFileTree($this->file_paths, $data['files'])
         ]);
@@ -41,11 +42,11 @@ class StoreFileRequest extends ParentIdBaseRequest
                 'file',
                 function ($attribute, $value, $fail) {
                     if (!$this->folder_name) {
-                        /**@var $value UploadedFile */
+                        /** @var $value UploadedFile */
                         $file = File::query()
                             ->where('name', $value->getClientOriginalName())
                             ->where('created_by', Auth::id())
-                            ->where('id', $this->parent_id)
+                            ->where('parent_id', $this->parent_id)
                             ->whereNull('deleted_at')
                             ->exists();
 
@@ -60,11 +61,10 @@ class StoreFileRequest extends ParentIdBaseRequest
                 'string',
                 function ($attribute, $value, $fail) {
                     if ($value) {
-                        /**@var $value UploadedFile */
-                        $file = File::query()
-                            ->where('name', $value)
+                        /** @var $value UploadedFile */
+                        $file = File::query()->where('name', $value)
                             ->where('created_by', Auth::id())
-                            ->where('id', $this->parent_id)
+                            ->where('parent_id', $this->parent_id)
                             ->whereNull('deleted_at')
                             ->exists();
 
@@ -83,7 +83,9 @@ class StoreFileRequest extends ParentIdBaseRequest
             return null;
         }
 
-        return explode('/', $paths[0])[0];
+        $parts = explode("/", $paths[0]);
+
+        return $parts[0];
     }
 
     private function buildFileTree($filePaths, $files)

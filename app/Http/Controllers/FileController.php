@@ -43,7 +43,6 @@ class FileController extends Controller
 
     public function createFolder(StoreFolderRequest $request)
     {
-
         $data = $request->validated();
         $parent = $request->parent;
 
