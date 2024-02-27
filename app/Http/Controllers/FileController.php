@@ -2,22 +2,38 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Requests\AddToFavouritesRequest;
+use App\Http\Requests\FilesActionRequest;
+use App\Http\Requests\ShareFilesRequest;
 use App\Http\Requests\StoreFileRequest;
 use App\Http\Requests\StoreFolderRequest;
+use App\Http\Requests\TrashFilesRequest;
 use App\Http\Resources\FileResource;
+use App\Mail\ShareFilesMail;
 use App\Models\File;
+use App\Models\FileShare;
+use App\Models\StarredFile;
+use App\Models\User;
+use Carbon\Carbon;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use Inertia\Inertia;
 use Inertia\Response;
+use ZipArchive;
 
 class FileController extends Controller
 {
     public function myFiles(Request $request, string $folder = null): AnonymousResourceCollection|Response
     {
-        $search = $request->get('search');
+//        $search = $request->get('search');
 
         if ($folder) {
             $folder = File:: query()
@@ -30,13 +46,14 @@ class FileController extends Controller
             $folder = $this->getRoot();
         }
 
-        $favourites = (int)$request->get('favourites');
+//        $favourites = (int)$request->get('favourites');
 
         $query = File::query()
-            ->select('files.*')
-            ->with('starred')
+//            ->select('files.*')
+//            ->with('starred')
+            ->where('parent_id', $folder->id)
             ->where('created_by', Auth::id())
-            ->where('_lft', '!=', 1)
+//            ->where('_lft', '!=', 1)
             ->orderBy('is_folder', 'desc')
             ->orderBy('files.created_at', 'desc')
             ->orderBy('files.id', 'desc');
@@ -111,7 +128,7 @@ class FileController extends Controller
         return File::query()->whereIsRoot()->where("created_by", Auth::id())->firstOrFail();
     }
 
-    public function saveFileTree($fileTree, $parent, $user)
+    public function saveFileTree($fileTree, $parent, $user): void
     {
         foreach ($fileTree as $name => $file) {
             if (is_array($file)) {
@@ -128,12 +145,6 @@ class FileController extends Controller
         }
     }
 
-    /**
-     * @param UploadedFile $file
-     * @param mixed $user
-     * @param File|null $parent
-     * @return void
-     */
     public function saveFile(UploadedFile $file, mixed $user, ?File $parent): void
     {
         $path = $file->store('/files/' . $user->id);
@@ -145,5 +156,343 @@ class FileController extends Controller
         $model->mime = $file->getMimeType();
         $model->size = $file->getSize();
         $parent->appendNode($model);
+    }
+
+    public function destroy(FilesActionRequest $request): RedirectResponse
+    {
+        $data = $request->validated();
+        $parent = $request->parent;
+
+        if ($data['all']) {
+            $children = $parent->children;
+
+            foreach ($children as $child) {
+                $child->moveToTrash();
+            }
+        } else {
+            foreach ($data['ids'] ?? [] as $id) {
+                $file = File::find($id);
+                if ($file) {
+                    $file->moveToTrash();
+                }
+            }
+        }
+
+        return to_route('myFiles', ['folder' => $parent->path]);
+    }
+
+    public function trash(Request $request): AnonymousResourceCollection|Response
+    {
+        $search = $request->get('search');
+        $query = File::onlyTrashed()
+            ->where('created_by', Auth::id())
+            ->orderBy('is_folder', 'desc')
+            ->orderBy('deleted_at', 'desc')
+            ->orderBy('files.id', 'desc');
+
+        if ($search) {
+            $query->where('name', 'like', "%$search%");
+        }
+
+        $files = $query->paginate(10);
+
+        $files = FileResource::collection($files);
+
+        if ($request->wantsJson()) {
+            return $files;
+        }
+
+        return Inertia::render('Trash', compact('files'));
+    }
+
+    public function sharedWithMe(Request $request): AnonymousResourceCollection|Response
+    {
+        $search = $request->get('search');
+        $query = File::getSharedWithMe();
+
+        if ($search) {
+            $query->where('name', 'like', "%$search%");
+        }
+
+        $files = $query->paginate(10);
+
+        $files = FileResource::collection($files);
+
+        if ($request->wantsJson()) {
+            return $files;
+        }
+
+        return Inertia::render('SharedWithMe', compact('files'));
+    }
+
+    public function sharedByMe(Request $request): AnonymousResourceCollection|Response
+    {
+        $search = $request->get('search');
+        $query = File::getSharedByMe();
+
+        if ($search) {
+            $query->where('name', 'like', "%$search%");
+        }
+
+        $files = $query->paginate(10);
+        $files = FileResource::collection($files);
+
+        if ($request->wantsJson()) {
+            return $files;
+        }
+
+        return Inertia::render('SharedByMe', compact('files'));
+    }
+
+    public function download(FilesActionRequest $request): array
+    {
+        $data = $request->validated();
+        $parent = $request->parent;
+
+        $all = $data['all'] ?? false;
+        $ids = $data['ids'] ?? [];
+
+        if (!$all && empty($ids)) {
+            return [
+                'message' => 'Please select files to download'
+            ];
+        }
+
+        if ($all) {
+            $url = $this->createZip($parent->children);
+            $filename = $parent->name . '.zip';
+        } else {
+            [$url, $filename] = $this->getDownloadUrl($ids, $parent->name);
+        }
+
+        return [
+            'url' => $url,
+            'filename' => $filename
+        ];
+    }
+
+    public function createZip($files): string
+    {
+        $zipPath = 'zip/' . Str::random() . '.zip';
+        $publicPath = "$zipPath";
+
+        if (!is_dir(dirname($publicPath))) {
+            Storage::disk('public')->makeDirectory(dirname($publicPath));
+        }
+
+        $zipFile = Storage::disk('public')->path($publicPath);
+
+        $zip = new ZipArchive();
+
+        if ($zip->open($zipFile, ZipArchive::CREATE | ZipArchive::OVERWRITE) === true) {
+            $this->addFilesToZip($zip, $files);
+        }
+
+        $zip->close();
+
+        return asset(Storage::disk('local')->url($zipPath));
+    }
+
+    private function addFilesToZip($zip, $files, $ancestors = ''): void
+    {
+        foreach ($files as $file) {
+            if ($file->is_folder) {
+                $this->addFilesToZip($zip, $file->children, $ancestors . $file->name . '/');
+            } else {
+                $localPath = Storage::disk('local')->path($file->storage_path);
+                if ($file->uploaded_on_cloud == 1) {
+                    $dest = pathinfo($file->storage_path, PATHINFO_BASENAME);
+                    $content = Storage::get($file->storage_path);
+                    Storage::disk('public')->put($dest, $content);
+                    $localPath = Storage::disk('public')->path($dest);
+                }
+
+                $zip->addFile($localPath, $ancestors . $file->name);
+            }
+        }
+    }
+
+    public function restore(TrashFilesRequest $request): RedirectResponse
+    {
+        $data = $request->validated();
+        if ($data['all']) {
+            $children = File::onlyTrashed()->get();
+            foreach ($children as $child) {
+                $child->restore();
+            }
+        } else {
+            $ids = $data['ids'] ?? [];
+            $children = File::onlyTrashed()->whereIn('id', $ids)->get();
+            foreach ($children as $child) {
+                $child->restore();
+            }
+        }
+
+        return to_route('trash');
+    }
+
+    public function deleteForever(TrashFilesRequest $request): RedirectResponse
+    {
+        $data = $request->validated();
+        if ($data['all']) {
+            $children = File::onlyTrashed()->get();
+            foreach ($children as $child) {
+                $child->deleteForever();
+            }
+        } else {
+            $ids = $data['ids'] ?? [];
+            $children = File::onlyTrashed()->whereIn('id', $ids)->get();
+            foreach ($children as $child) {
+                $child->deleteForever();
+            }
+        }
+
+        return to_route('trash');
+    }
+
+    public function addToFavourites(AddToFavouritesRequest $request): RedirectResponse
+    {
+        $data = $request->validated();
+
+        $id = $data['id'];
+        $file = File::find($id);
+        $user_id = Auth::id();
+
+        $starredFile = StarredFile::query()
+            ->where('file_id', $file->id)
+            ->where('user_id', $user_id)
+            ->first();
+
+        if ($starredFile) {
+            $starredFile->delete();
+        } else {
+            StarredFile::create([
+                'file_id' => $file->id,
+                'user_id' => $user_id,
+                'created_at' => Carbon::now(),
+                'updated_at' => Carbon::now(),
+            ]);
+        }
+
+        return redirect()->back();
+    }
+
+    public function share(ShareFilesRequest $request): array|RedirectResponse
+    {
+        $data = $request->validated();
+        $parent = $request->parent;
+
+        $all = $data['all'] ?? false;
+        $email = $data['email'] ?? false;
+        $ids = $data['ids'] ?? [];
+
+        if (!$all && empty($ids)) {
+            return [
+                'message' => 'Please select files to share'
+            ];
+        }
+
+        $user = User::query()->where('email', $email)->first();
+
+        if (!$user) {
+            return redirect()->back();
+        }
+
+        if ($all) {
+            $files = $parent->children;
+        } else {
+            $files = File::find($ids);
+        }
+
+        $data = [];
+        $ids = Arr::pluck($files, 'id');
+        $existingFileIds = FileShare::query()
+            ->whereIn('file_id', $ids)
+            ->where('user_id', $user->id)
+            ->get()
+            ->keyBy('file_id');
+
+        foreach ($files as $file) {
+            if ($existingFileIds->has($file->id)) {
+                continue;
+            }
+            $data[] = [
+                'file_id' => $file->id,
+                'user_id' => $user->id,
+                'created_at' => Carbon::now(),
+                'updated_at' => Carbon::now(),
+            ];
+        }
+        FileShare::insert($data);
+
+        Mail::to($user)->send(new ShareFilesMail($user, Auth::user(), $files));
+
+        return redirect()->back();
+    }
+
+    public function downloadSharedWithMe(FilesActionRequest $request): array
+    {
+        $data = $request->validated();
+
+        $all = $data['all'] ?? false;
+        $ids = $data['ids'] ?? [];
+
+        if (!$all && empty($ids)) {
+            return [
+                'message' => 'Please select files to download'
+            ];
+        }
+
+        $zipName = 'shared_with_me';
+        if ($all) {
+            $files = File::getSharedWithMe()->get();
+            $url = $this->createZip($files);
+            $filename = $zipName . '.zip';
+        } else {
+            [$url, $filename] = $this->getDownloadUrl($ids, $zipName);
+        }
+
+        return [
+            'url' => $url,
+            'filename' => $filename
+        ];
+    }
+
+    private function getDownloadUrl(array $ids, $zipName): array
+    {
+        if (count($ids) === 1) {
+            $file = File::find($ids[0]);
+            if ($file->is_folder) {
+                if ($file->children->count() === 0) {
+                    return [
+                        'message' => 'The folder is empty'
+                    ];
+                }
+                $url = $this->createZip($file->children);
+                $filename = $file->name . '.zip';
+            } else {
+                $dest = pathinfo($file->storage_path, PATHINFO_BASENAME);
+                if ($file->uploaded_on_cloud) {
+                    $content = Storage::get($file->storage_path);
+                } else {
+                    $content = Storage::disk('local')->get($file->storage_path);
+                }
+
+                Log::debug("Getting file content. File:  " . $file->storage_path) . ". Content: " . intval($content);
+
+                $success = Storage::disk('public')->put($dest, $content);
+                Log::debug('Inserted in public disk. "' . $dest . '". Success: ' . intval($success));
+                $url = asset(Storage::disk('public')->url($dest));
+                Log::debug("Logging URL " . $url);
+                $filename = $file->name;
+            }
+        } else {
+            $files = File::query()->whereIn('id', $ids)->get();
+            $url = $this->createZip($files);
+
+            $filename = $zipName . '.zip';
+        }
+
+        return [$url, $filename];
     }
 }
