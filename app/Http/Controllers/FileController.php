@@ -9,6 +9,7 @@ use App\Http\Requests\StoreFileRequest;
 use App\Http\Requests\StoreFolderRequest;
 use App\Http\Requests\TrashFilesRequest;
 use App\Http\Resources\FileResource;
+use App\Jobs\UploadFileToCloudJob;
 use App\Mail\ShareFilesMail;
 use App\Models\File;
 use App\Models\FileShare;
@@ -33,41 +34,39 @@ class FileController extends Controller
 {
     public function myFiles(Request $request, string $folder = null): AnonymousResourceCollection|Response
     {
-//        $search = $request->get('search');
+        $search = $request->get('search');
 
         if ($folder) {
-            $folder = File:: query()
-                ->where('created_by', Auth:: id())
+            $folder = File::query()
+                ->where('created_by', Auth::id())
                 ->where('path', $folder)
                 ->firstOrFail();
         }
-
         if (!$folder) {
             $folder = $this->getRoot();
         }
 
-//        $favourites = (int)$request->get('favourites');
+        $favourites = (int)$request->get('favourites');
 
         $query = File::query()
-//            ->select('files.*')
-//            ->with('starred')
-            ->where('parent_id', $folder->id)
+            ->select('files.*')
+            ->with('starred')
             ->where('created_by', Auth::id())
-//            ->where('_lft', '!=', 1)
+            ->where('_lft', '!=', 1)
             ->orderBy('is_folder', 'desc')
             ->orderBy('files.created_at', 'desc')
             ->orderBy('files.id', 'desc');
 
-//        if ($search) {
-//            $query->where('name', 'like', "%$search%");
-//        } else {
-//            $query->where('parent_id', $folder->id);
-//        }
-//
-//        if ($favourites === 1) {
-//            $query->join('starred_files', 'starred_files.file_id', '=', 'files.id')
-//                ->where('starred_files.user_id', Auth::id());
-//        }
+        if ($search) {
+            $query->where('name', 'like', "%$search%");
+        } else {
+            $query->where('parent_id', $folder->id);
+        }
+
+        if ($favourites === 1) {
+            $query->join('starred_files', 'starred_files.file_id', '=', 'files.id')
+                ->where('starred_files.user_id', Auth::id());
+        }
 
         $files = $query->paginate(10);
 
@@ -107,7 +106,6 @@ class FileController extends Controller
         $user = $request->user();
         $fileTree = $request->file_tree;
 
-
         if (!$parent) {
             $parent = $this->getRoot();
         }
@@ -145,9 +143,14 @@ class FileController extends Controller
         }
     }
 
-    public function saveFile(UploadedFile $file, mixed $user, ?File $parent): void
+    /**
+     * @param $file
+     * @param $user
+     * @param $parent
+     */
+    private function saveFile($file, $user, $parent): void
     {
-        $path = $file->store('/files/' . $user->id);
+        $path = $file->store('/files/' . $user->id, 'local');
 
         $model = new File();
         $model->storage_path = $path;
@@ -155,7 +158,11 @@ class FileController extends Controller
         $model->name = $file->getClientOriginalName();
         $model->mime = $file->getMimeType();
         $model->size = $file->getSize();
+        $model->uploaded_on_cloud = 0;
+
         $parent->appendNode($model);
+
+        UploadFileToCloudJob::dispatch($model);
     }
 
     public function destroy(FilesActionRequest $request): RedirectResponse
