@@ -26,8 +26,8 @@
                 </li>
             </ol>
 
-            <div class="flex">
-                <label class="flex items-center mr-3">
+            <div class="flex gap-3">
+                <label class="flex items-center">
                     Only Favourites
                     <Checkbox @change="showOnlyFavourites" v-model:checked="onlyFavourites" class="ml-2"/>
                 </label>
@@ -91,9 +91,12 @@
 
                         </div>
                     </td>
-                    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 flex items-center">
+                    <td class="text-sm font-medium text-gray-900 max-w-[500px] px-6 py-4 flex items-center">
                         <FileIcon :file="file"/>
-                        {{ file.name }}
+                        <p class="whitespace-nowrap overflow-hidden overflow-ellipsis">
+
+                            {{ file.name }}
+                        </p>
                     </td>
                     <td v-if="search" class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                         {{ file.path }}
