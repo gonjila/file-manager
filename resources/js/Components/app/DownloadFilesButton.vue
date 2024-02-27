@@ -74,13 +74,8 @@ function download() {
             a.href = res.url;
             a.click();
         })
-
 }
 
 // Hooks
 
 </script>
-
-<style scoped>
-
-</style>
