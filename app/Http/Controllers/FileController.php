@@ -319,6 +319,44 @@ class FileController extends Controller
         }
     }
 
+    private function getDownloadUrl(array $ids, $zipName): array
+    {
+        if (count($ids) === 1) {
+            $file = File::find($ids[0]);
+            if ($file->is_folder) {
+                if ($file->children->count() === 0) {
+                    return [
+                        'message' => 'The folder is empty'
+                    ];
+                }
+                $url = $this->createZip($file->children);
+                $filename = $file->name . '.zip';
+            } else {
+                $dest = pathinfo($file->storage_path, PATHINFO_BASENAME);
+                if ($file->uploaded_on_cloud) {
+                    $content = Storage::get($file->storage_path);
+                } else {
+                    $content = Storage::disk('local')->get($file->storage_path);
+                }
+
+                Log::debug("Getting file content. File:  " . $file->storage_path) . ". Content: " . intval($content);
+
+                $success = Storage::disk('public')->put($dest, $content);
+                Log::debug('Inserted in public disk. "' . $dest . '". Success: ' . intval($success));
+                $url = asset(Storage::disk('public')->url($dest));
+                Log::debug("Logging URL " . $url);
+                $filename = $file->name;
+            }
+        } else {
+            $files = File::query()->whereIn('id', $ids)->get();
+            $url = $this->createZip($files);
+
+            $filename = $zipName . '.zip';
+        }
+
+        return [$url, $filename];
+    }
+
     public function restore(TrashFilesRequest $request): RedirectResponse
     {
         $data = $request->validated();
@@ -362,7 +400,7 @@ class FileController extends Controller
         $data = $request->validated();
 
         $id = $data['id'];
-        $file = File::find($id);
+        $file = File::query()->find($id);
         $user_id = Auth::id();
 
         $starredFile = StarredFile::query()
@@ -465,41 +503,4 @@ class FileController extends Controller
         ];
     }
 
-    private function getDownloadUrl(array $ids, $zipName): array
-    {
-        if (count($ids) === 1) {
-            $file = File::find($ids[0]);
-            if ($file->is_folder) {
-                if ($file->children->count() === 0) {
-                    return [
-                        'message' => 'The folder is empty'
-                    ];
-                }
-                $url = $this->createZip($file->children);
-                $filename = $file->name . '.zip';
-            } else {
-                $dest = pathinfo($file->storage_path, PATHINFO_BASENAME);
-                if ($file->uploaded_on_cloud) {
-                    $content = Storage::get($file->storage_path);
-                } else {
-                    $content = Storage::disk('local')->get($file->storage_path);
-                }
-
-                Log::debug("Getting file content. File:  " . $file->storage_path) . ". Content: " . intval($content);
-
-                $success = Storage::disk('public')->put($dest, $content);
-                Log::debug('Inserted in public disk. "' . $dest . '". Success: ' . intval($success));
-                $url = asset(Storage::disk('public')->url($dest));
-                Log::debug("Logging URL " . $url);
-                $filename = $file->name;
-            }
-        } else {
-            $files = File::query()->whereIn('id', $ids)->get();
-            $url = $this->createZip($files);
-
-            $filename = $zipName . '.zip';
-        }
-
-        return [$url, $filename];
-    }
 }

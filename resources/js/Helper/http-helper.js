@@ -15,6 +15,7 @@ export function httpGet(url) {
 
 export function httpPost(url, data) {
     const page = usePage()
+
     return new Promise((resolve, reject) => {
         fetch(url, {
             method: 'POST',
