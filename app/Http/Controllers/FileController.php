@@ -268,8 +268,9 @@ class FileController extends Controller
         if ($all) {
             $url = $this->createZip($parent->children);
             $filename = $parent->name . '.zip';
+//            $filename = 'files-from-file-manager.zip';
         } else {
-            [$url, $filename] = $this->getDownloadUrl($ids, $parent->name);
+            [$url, $filename] = $this->getDownloadUrl($ids, 'files-from-file-manager');
         }
 
         return [
